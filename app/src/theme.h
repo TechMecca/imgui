@@ -1,0 +1,98 @@
+#pragma once
+
+#include "imgui.h"
+
+// Icon glyphs (UTF-8) from "Segoe Fluent Icons" (Windows 11) / "Segoe MDL2 Assets" (Windows 10).
+// Draw them with Widgets::Icon(), which skips them when neither font is installed.
+#define ICON_HOME      "\xee\xa0\x8f" // U+E80F
+#define ICON_APPS      "\xee\x9c\x9d" // U+E71D
+#define ICON_SETTINGS  "\xee\x9c\x93" // U+E713
+#define ICON_INFO      "\xee\xa5\x86" // U+E946
+#define ICON_SHIELD    "\xee\xa8\x98" // U+EA18
+#define ICON_GLOBE     "\xee\x9d\xb4" // U+E774
+#define ICON_POWER     "\xee\x9f\xa8" // U+E7E8
+#define ICON_CHECK     "\xee\x9c\xbe" // U+E73E
+#define ICON_ERROR     "\xee\x9e\x83" // U+E783
+#define ICON_LOCK      "\xee\x9c\xae" // U+E72E
+#define ICON_SYNC      "\xee\xa2\x95" // U+E895
+#define ICON_CLOUD     "\xee\x9d\x93" // U+E753
+#define ICON_BELL      "\xee\xaa\x8f" // U+EA8F
+#define ICON_DOWNLOAD  "\xee\xa2\x96" // U+E896
+#define ICON_BOLT      "\xee\xa5\x85" // U+E945
+#define ICON_HISTORY   "\xee\xa0\x9c" // U+E81C
+#define ICON_SPEED     "\xee\xb1\x8a" // U+EC4A
+#define ICON_CODE      "\xee\xa5\x83" // U+E943
+#define ICON_USER      "\xee\x9d\xbb" // U+E77B
+#define ICON_PALETTE   "\xee\x9e\x90" // U+E790
+
+namespace Theme
+{
+    // Branding - change these to rename the app.
+    constexpr const char* AppName    = "NOVA";
+    constexpr const char* AppTagline = "SECURE CLIENT";
+    constexpr const char* AppVersion = "1.0.0";
+
+    // Window sizes in 96-DPI units (scaled automatically on high-DPI monitors).
+    constexpr float ConnectWindowWidth  = 440.0f;
+    constexpr float ConnectWindowHeight = 340.0f;
+    constexpr float MainWindowWidth     = 940.0f;
+    constexpr float MainWindowHeight    = 600.0f;
+
+    struct FontSet
+    {
+        ImFont* Body       = nullptr;
+        ImFont* Bold       = nullptr;
+        ImFont* Small      = nullptr;
+        ImFont* Heading    = nullptr;
+        ImFont* Display    = nullptr; // logo wordmark
+        ImFont* Icons      = nullptr; // null when the icon font is missing
+        ImFont* IconsLarge = nullptr;
+    };
+    extern FontSet Fonts;
+
+    struct Palette
+    {
+        ImVec4 Bg;        // window background
+        ImVec4 Surface;   // main content panel
+        ImVec4 Card;
+        ImVec4 CardHi;    // hovered / raised elements
+        ImVec4 Border;
+        ImVec4 Text;
+        ImVec4 TextDim;
+        ImVec4 TextFaint;
+        ImVec4 AccentA;   // accent gradient start
+        ImVec4 AccentB;   // accent gradient end
+        ImVec4 Success;
+        ImVec4 Warning;
+        ImVec4 Danger;
+    };
+    extern Palette Colors;
+
+    struct AccentPreset { const char* Name; ImVec4 A, B; };
+    extern const AccentPreset AccentPresets[];
+    extern const int AccentPresetCount;
+
+    // User toggles (Settings page)
+    extern bool Animations;
+    extern bool BackgroundEffects;
+
+    void  Init(float dpi_scale);        // fonts + style; call once after ImGui::CreateContext()
+    void  SetDpiScale(float dpi_scale); // rebuilds fonts + style; call between frames with the renderer's font texture released
+    void  SetAccent(int preset_index);
+    int   Accent();
+    float DpiScale();
+
+    inline float  S(float v)          { return v * DpiScale(); }
+    inline ImVec2 S(float x, float y) { return ImVec2(x * DpiScale(), y * DpiScale()); }
+
+    inline const char* BuildArch() { return sizeof(void*) == 8 ? "x64" : "x86"; }
+#ifdef NDEBUG
+    inline const char* BuildConfig() { return "Release"; }
+#else
+    inline const char* BuildConfig() { return "Debug"; }
+#endif
+
+    ImU32  Col(const ImVec4& c, float alpha = 1.0f); // includes the current style alpha, so fades apply
+    ImVec4 Mix(const ImVec4& a, const ImVec4& b, float t);
+    ImVec4 WithAlpha(const ImVec4& c, float alpha);
+}

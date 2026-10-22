@@ -1,0 +1,27 @@
+name: Build app
+
+on:
+  push:
+    paths:
+      - 'app/**'
+      - '*.cpp'
+      - '*.h'
+      - '.github/workflows/build-app.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        platform: [x86, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - name: Build Release ${{ matrix.platform }}
+        run: msbuild app\ImGuiApp.sln /m /p:Configuration=Release /p:Platform=${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ImGuiApp-${{ matrix.platform }}
+          path: app/bin/${{ matrix.platform }}/Release/ImGuiApp.exe
