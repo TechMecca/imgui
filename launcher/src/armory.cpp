@@ -1,5 +1,14 @@
 #include "armory.h"
 
+#include "net.h"
+
+#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+#include <algorithm>
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -220,6 +229,24 @@ std::string GetStr(const JsonValue& obj, const char* key)
     return v ? v->AsString() : std::string();
 }
 
+// Talent points come either as one value or as an array per tree ("57 / 3 / 11").
+std::string PointsText(const JsonValue* v)
+{
+    if (!v)
+        return std::string();
+    if (v->type != JsonValue::Array)
+        return v->AsString();
+    std::string out;
+    for (const JsonValue& e : v->arr)
+    {
+        if (!out.empty())
+            out += " / ";
+        const std::string p = e.AsString();
+        out += p.empty() ? "0" : p;
+    }
+    return out;
+}
+
 } // namespace
 
 Character ParseCharacterSummary(const std::string& json)
@@ -266,11 +293,16 @@ Character ParseCharacterSummary(const std::string& json)
                 std::string tree = GetStr(e, "tree");
                 if (tree.empty())
                     tree = GetStr(e, "name");
-                c.Talents.emplace_back(tree, GetStr(e, "points"));
+                c.Talents.emplace_back(tree, PointsText(e.Find("points")));
             }
 
     if (const JsonValue* equip = root.Find("equipment"))
-        c.EquipmentCount = (int)equip->arr.size();
+    {
+        for (const JsonValue& e : equip->arr)
+            if (e.type == JsonValue::Object)
+                c.Equipment.emplace_back((unsigned)strtoul(GetStr(e, "item").c_str(), nullptr, 10), GetStr(e, "name"));
+        c.EquipmentCount = (int)c.Equipment.size();
+    }
 
     c.Found = !c.Name.empty();
     if (!c.Found && c.Error.empty())
@@ -279,39 +311,162 @@ Character ParseCharacterSummary(const std::string& json)
 }
 
 //-----------------------------------------------------------------------------
-// HTTP fetch (WinHTTP)
+// Profile page: the 19 paper-doll slots
 //-----------------------------------------------------------------------------
 
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <winhttp.h>
+const char* GearSlotName(int index)
+{
+    static const char* names[GearSlotCount] =
+    {
+        "Head", "Neck", "Shoulders", "Back", "Chest", "Shirt", "Tabard", "Wrists",
+        "Hands", "Waist", "Legs", "Feet", "Finger", "Finger", "Trinket", "Trinket",
+        "Main Hand", "Off Hand", "Ranged",
+    };
+    return (index >= 0 && index < GearSlotCount) ? names[index] : "";
+}
 
 namespace {
 
-std::wstring Widen(const std::string& s)
+bool IsClassChar(char c)
 {
-    if (s.empty())
-        return std::wstring();
-    const int n = ::MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-    std::wstring w(n, L'\0');
-    ::MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], n);
-    return w;
+    return isalnum((unsigned char)c) || c == '-' || c == '_';
 }
 
-std::string UrlEncode(const std::string& s)
+// Finds 'token' as a whole word inside an HTML class attribute (so "item-slot" doesn't match "item-slots").
+size_t FindClassToken(const std::string& html, const char* token, size_t from)
 {
-    static const char* hex = "0123456789ABCDEF";
-    std::string out;
-    for (unsigned char c : s)
+    const size_t len = strlen(token);
+    for (size_t pos = html.find(token, from); pos != std::string::npos; pos = html.find(token, pos + 1))
     {
-        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
-            out += (char)c;
-        else { out += '%'; out += hex[c >> 4]; out += hex[c & 0x0F]; }
+        const char before = pos > 0 ? html[pos - 1] : ' ';
+        const char after = pos + len < html.size() ? html[pos + len] : ' ';
+        if (!IsClassChar(before) && !IsClassChar(after))
+            return pos;
     }
-    return out;
+    return std::string::npos;
 }
 
-std::string ApiBase()
+// Value of attr="..." at or after 'from' and before 'limit'.
+bool AttrValue(const std::string& html, const char* attr, size_t from, size_t limit, std::string* out)
+{
+    const std::string key = std::string(attr) + "=\"";
+    const size_t pos = html.find(key, from);
+    if (pos == std::string::npos || pos >= limit)
+        return false;
+    const size_t start = pos + key.size();
+    const size_t end = html.find('"', start);
+    if (end == std::string::npos || end > limit)
+        return false;
+    *out = html.substr(start, end - start);
+    return true;
+}
+
+std::string Unescape(std::string s)
+{
+    for (size_t pos; (pos = s.find("&amp;")) != std::string::npos; )
+        s.replace(pos, 5, "&");
+    return s;
+}
+
+// "item=51162&ench=3817&gems=3628:3518:0" -> value of 'key'
+std::string QueryParam(const std::string& query, const char* key)
+{
+    const std::string k = std::string(key) + "=";
+    size_t pos = 0;
+    while ((pos = query.find(k, pos)) != std::string::npos)
+    {
+        if (pos == 0 || query[pos - 1] == '&' || query[pos - 1] == '?' || query[pos - 1] == ' ')
+        {
+            const size_t start = pos + k.size();
+            const size_t end = query.find('&', start);
+            return query.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        }
+        pos += k.size();
+    }
+    return std::string();
+}
+
+} // namespace
+
+bool ParseProfileGear(const std::string& html, std::vector<GearItem>* gear, std::string* error)
+{
+    // Slot order follows the armory's paper-doll: 8 on the left, 8 on the right, 3 weapons at the bottom.
+    struct Column { const char* cls; int first; int count; };
+    static const Column columns[] = { { "item-left", 0, 8 }, { "item-right", 8, 8 }, { "item-bottom", 16, 3 } };
+
+    std::vector<GearItem> result(GearSlotCount);
+    for (const Column& col : columns)
+    {
+        size_t pos = FindClassToken(html, col.cls, 0);
+        if (pos == std::string::npos)
+        {
+            *error = std::string("Gear layout not found (") + col.cls + ").";
+            return false;
+        }
+        for (int i = 0; i < col.count; i++)
+        {
+            pos = FindClassToken(html, "item-slot", pos + 1);
+            if (pos == std::string::npos)
+            {
+                *error = "Gear layout changed.";
+                return false;
+            }
+            // A slot's markup runs until the next slot (capped, so the last one can't swallow the page).
+            size_t next = FindClassToken(html, "item-slot", pos + 1);
+            const size_t limit = std::min(next == std::string::npos ? html.size() : next, pos + 1500);
+
+            GearItem& item = result[col.first + i];
+            std::string rel;
+            if (AttrValue(html, "rel", pos, limit, &rel))
+            {
+                rel = Unescape(rel);
+                item.ItemId = (unsigned)strtoul(QueryParam(rel, "item").c_str(), nullptr, 10);
+                item.Enchanted = !QueryParam(rel, "ench").empty() && QueryParam(rel, "ench") != "0";
+                const std::string gems = QueryParam(rel, "gems");
+                for (size_t start = 0; start < gems.size(); )
+                {
+                    size_t end = gems.find(':', start);
+                    if (end == std::string::npos)
+                        end = gems.size();
+                    if (strtoul(gems.substr(start, end - start).c_str(), nullptr, 10) != 0)
+                        item.Gems++;
+                    start = end + 1;
+                }
+            }
+            if (item.ItemId == 0)
+                continue; // empty slot
+
+            for (size_t q = html.find("icon-quality", pos); q != std::string::npos && q < limit; q = html.find("icon-quality", q + 1))
+                if (q + 12 < html.size() && isdigit((unsigned char)html[q + 12]))
+                {
+                    item.Quality = html[q + 12] - '0';
+                    break;
+                }
+
+            const size_t img = html.find("<img", pos);
+            std::string src;
+            if (img != std::string::npos && img < limit && AttrValue(html, "src", img, limit, &src))
+            {
+                src = Unescape(src);
+                if (src.compare(0, 2, "//") == 0)
+                    src = "https:" + src;
+                else if (!src.empty() && src[0] == '/')
+                    src = "https://armory.warmane.com" + src;
+                item.IconUrl = src;
+            }
+        }
+    }
+    *gear = result;
+    return true;
+}
+
+//-----------------------------------------------------------------------------
+// Armory worker
+//-----------------------------------------------------------------------------
+
+static const auto kCacheTtl = std::chrono::minutes(5);
+
+static std::string ApiBase()
 {
     char buf[512];
     const DWORD n = ::GetEnvironmentVariableA("ARMORY_API_BASE", buf, sizeof(buf)); // test hook
@@ -320,98 +475,12 @@ std::string ApiBase()
     return "https://armory.warmane.com";
 }
 
-// GETs 'url' and returns true with the body in 'out'. On failure, 'error' is set.
-bool HttpGet(const std::wstring& url, std::string* out, std::string* error, const std::atomic<bool>& cancel)
+static std::string Lower(std::string s)
 {
-    URL_COMPONENTS uc = {};
-    uc.dwStructSize = sizeof(uc);
-    wchar_t host[256] = {}, path[1024] = {};
-    uc.lpszHostName = host; uc.dwHostNameLength = _countof(host);
-    uc.lpszUrlPath = path; uc.dwUrlPathLength = _countof(path);
-    if (!::WinHttpCrackUrl(url.c_str(), 0, 0, &uc))
-    {
-        *error = "Bad armory URL.";
-        return false;
-    }
-
-    HINTERNET session = ::WinHttpOpen(L"NorthrendLauncher/1.0 (armory lookup)",
-                                      WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!session)
-    {
-        *error = "Could not start a network session.";
-        return false;
-    }
-    ::WinHttpSetTimeouts(session, 8000, 8000, 10000, 10000);
-
-    bool ok = false;
-    HINTERNET connect = ::WinHttpConnect(session, host, uc.nPort, 0);
-    if (connect)
-    {
-        const DWORD flags = (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
-        HINTERNET request = ::WinHttpOpenRequest(connect, L"GET", path, nullptr, WINHTTP_NO_REFERER,
-                                                 WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
-        if (request)
-        {
-            if (::WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
-                ::WinHttpReceiveResponse(request, nullptr))
-            {
-                DWORD status = 0, len = sizeof(status);
-                ::WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                                      WINHTTP_HEADER_NAME_BY_INDEX, &status, &len, WINHTTP_NO_HEADER_INDEX);
-                if (status == 200)
-                {
-                    out->clear();
-                    DWORD avail = 0;
-                    do
-                    {
-                        if (cancel.load())
-                            break;
-                        if (!::WinHttpQueryDataAvailable(request, &avail))
-                            break;
-                        if (avail == 0)
-                            continue;
-                        std::string chunk(avail, '\0');
-                        DWORD read = 0;
-                        if (!::WinHttpReadData(request, &chunk[0], avail, &read))
-                            break;
-                        out->append(chunk.data(), read);
-                    } while (avail > 0 && out->size() < 2 * 1024 * 1024);
-                    ok = !cancel.load();
-                    if (!ok)
-                        *error = "Cancelled.";
-                }
-                else if (status == 404)
-                {
-                    *error = "Character not found.";
-                }
-                else
-                {
-                    char buf[64];
-                    snprintf(buf, sizeof(buf), "The armory returned HTTP %lu.", status);
-                    *error = buf;
-                }
-            }
-            else
-            {
-                *error = "Could not reach armory.warmane.com.";
-            }
-            ::WinHttpCloseHandle(request);
-        }
-        ::WinHttpCloseHandle(connect);
-    }
-    else
-    {
-        *error = "Could not reach armory.warmane.com.";
-    }
-    ::WinHttpCloseHandle(session);
-    return ok;
+    for (char& c : s)
+        c = (char)tolower((unsigned char)c);
+    return s;
 }
-
-} // namespace
-
-//-----------------------------------------------------------------------------
-// Armory worker
-//-----------------------------------------------------------------------------
 
 Armory::~Armory()
 {
@@ -455,19 +524,58 @@ void Armory::Cancel()
 
 void Armory::Run(std::string name, std::string realm)
 {
-    const std::string url = ApiBase() + "/api/character/" + UrlEncode(name) + "/" + UrlEncode(realm) + "/summary";
-    std::string body, error;
+    const std::string key = Lower(name) + "|" + Lower(realm);
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        auto it = m_Cache.find(key);
+        if (it != m_Cache.end() && std::chrono::steady_clock::now() - it->second.first < kCacheTtl)
+        {
+            m_Result = it->second.second;
+            m_State = State::Done;
+            return;
+        }
+    }
+
+    const std::string base = ApiBase();
+    const std::string path = UrlEncode(name) + "/" + UrlEncode(realm);
     Character result;
-    if (HttpGet(Widen(url), &body, &error, m_Cancel))
+    std::string body, error;
+    unsigned long status = 0;
+
+    if (HttpGet(base + "/api/character/" + path + "/summary", &body, &error, &m_Cancel, &status))
         result = ParseCharacterSummary(body);
     else
-        result.Error = error;
+        result.Error = (status == 404) ? std::string("Character not found.")
+                     : (status == 0)   ? std::string("Could not reach armory.warmane.com.") : error;
+
+    // Gear layout + icons come from the profile page.
+    if (result.Found && !m_Cancel.load())
+    {
+        std::string html;
+        if (HttpGet(base + "/character/" + path + "/profile", &html, &error, &m_Cancel, &status) &&
+            ParseProfileGear(html, &result.Gear, &result.GearError))
+        {
+            for (GearItem& g : result.Gear)
+                for (const auto& e : result.Equipment)
+                    if (g.ItemId != 0 && e.first == g.ItemId)
+                    {
+                        g.Name = e.second;
+                        break;
+                    }
+        }
+        else if (result.GearError.empty())
+        {
+            result.GearError = "Couldn't load the gear layout (" + error + ")";
+        }
+    }
 
     if (m_Cancel.load())
         return;
     {
         std::lock_guard<std::mutex> lock(m_Mutex);
         m_Result = result;
+        if (result.Found)
+            m_Cache[key] = std::make_pair(std::chrono::steady_clock::now(), result);
     }
-    m_State = (result.Found ? State::Done : State::Error);
+    m_State = result.Found ? State::Done : State::Error;
 }

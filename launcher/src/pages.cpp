@@ -12,6 +12,7 @@
 #include <ctype.h>
 #include <float.h>
 #include <math.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -239,15 +240,31 @@ static ImVec4 ClassColor(const std::string& klass)
     };
     for (const C& c : colors)
         if (klass == c.name)
-            return ImVec4(((c.rgb>>16)&0xFF)/255.0f, ((c.rgb>>8)&0xFF)/255.0f, (c.rgb&0xFF)/255.0f, 1.0f);
+            return ImVec4(((c.rgb >> 16) & 0xFF) / 255.0f, ((c.rgb >> 8) & 0xFF) / 255.0f, (c.rgb & 0xFF) / 255.0f, 1.0f);
     return Colors.Text;
+}
+
+// Item quality colors and names (poor .. heirloom).
+static ImVec4 QualityColor(int quality)
+{
+    static const unsigned int rgb[] = { 0x9D9D9D, 0xFFFFFF, 0x1EFF00, 0x0070DD, 0xA335EE, 0xFF8000, 0xE6CC80, 0xE6CC80 };
+    if (quality < 0 || quality > 7)
+        return Colors.TextDim;
+    const unsigned int c = rgb[quality];
+    return ImVec4(((c >> 16) & 0xFF) / 255.0f, ((c >> 8) & 0xFF) / 255.0f, (c & 0xFF) / 255.0f, 1.0f);
+}
+
+static const char* QualityName(int quality)
+{
+    static const char* names[] = { "Poor", "Common", "Uncommon", "Rare", "Epic", "Legendary", "Artifact", "Heirloom" };
+    return (quality >= 0 && quality <= 7) ? names[quality] : "";
 }
 
 void App::StartArmorySearch(const std::string& name, int realm_index)
 {
     std::string trimmed = name;
-    size_t bgn = trimmed.find_first_not_of(" \t");
-    size_t end = trimmed.find_last_not_of(" \t");
+    const size_t bgn = trimmed.find_first_not_of(" \t");
+    const size_t end = trimmed.find_last_not_of(" \t");
     trimmed = (bgn == std::string::npos) ? std::string() : trimmed.substr(bgn, end - bgn + 1);
     if (trimmed.empty())
     {
@@ -270,6 +287,27 @@ void App::StartArmorySearch(const std::string& name, int realm_index)
     SaveSoon();
 }
 
+// Race portraits are regular icons on the same CDN as the gear icons:
+// .../icons/large/achievement_character_<race>_<gender>.jpg
+std::string App::PortraitUrl(const Character& c) const
+{
+    std::string base = "http://cdn.warmane.com/wotlk/icons/large/";
+    for (const GearItem& g : c.Gear)
+        if (!g.IconUrl.empty())
+        {
+            base = g.IconUrl.substr(0, g.IconUrl.find_last_of('/') + 1);
+            break;
+        }
+    std::string race;
+    for (char ch : c.Race)
+        if (ch != ' ')
+            race += (char)tolower((unsigned char)ch); // "Night Elf" -> "nightelf"
+    if (race.empty())
+        return std::string();
+    const bool female = !c.Gender.empty() && (c.Gender[0] == 'F' || c.Gender[0] == 'f');
+    return base + "achievement_character_" + race + (female ? "_female" : "_male") + ".jpg";
+}
+
 // One labelled stat tile (achievement points, honorable kills, ...).
 static void StatTile(ImVec2 size, const char* caption, const std::string& value, const char* icon)
 {
@@ -286,10 +324,370 @@ static void StatTile(ImVec2 size, const char* caption, const std::string& value,
     ImGui::Dummy(size);
 }
 
+// "Sanctified Dark Coven Ho..." - item names read better cut at the end.
+static std::string EllipsizeEnd(ImFont* font, const std::string& text, float max_width)
+{
+    auto width = [font](const std::string& s) { return font->CalcTextSizeA(font->FontSize, FLT_MAX, 0.0f, s.c_str()).x; };
+    if (width(text) <= max_width)
+        return text;
+    std::string out = text;
+    while (!out.empty())
+    {
+        out.pop_back();
+        while (!out.empty() && ((unsigned char)out.back() & 0xC0) == 0x80) // don't split a UTF-8 character
+            out.pop_back();
+        if (!out.empty() && ((unsigned char)out.back() & 0x80))
+            out.pop_back();
+        const size_t end = out.find_last_not_of(' ');
+        const std::string candidate = (end == std::string::npos ? std::string() : out.substr(0, end + 1)) + "...";
+        if (width(candidate) <= max_width)
+            return candidate;
+    }
+    return "...";
+}
+
+// Icon square with a quality-colored frame (or an empty-slot placeholder).
+static void DrawItemIcon(ImDrawList* dl, IconCache& icons, const GearItem& item, ImVec2 p, float size)
+{
+    const float r = S(6.0f);
+    dl->AddRectFilled(p, p + ImVec2(size, size), Col(Colors.Bg), r);
+    if (item.ItemId == 0)
+    {
+        dl->AddRect(p, p + ImVec2(size, size), Col(Colors.Border, 0.8f), r);
+        Widgets::Icon(dl, ICON_PUZZLE, p + ImVec2(size, size) * 0.5f, Col(Colors.TextFaint, 0.5f));
+        return;
+    }
+    const IconCache::Icon* icon = icons.Get(item.IconUrl);
+    if (icon && icon->Texture)
+        dl->AddImageRounded(icon->Texture, p + ImVec2(1.5f, 1.5f), p + ImVec2(size - 1.5f, size - 1.5f), ImVec2(0, 0), icon->Uv1,
+                            Col(ImVec4(1, 1, 1, 1)), r - 1.0f);
+    else if (!icon || !icon->Failed) // still loading: soft pulse
+        dl->AddRectFilled(p + ImVec2(2, 2), p + ImVec2(size - 2, size - 2),
+                          Col(QualityColor(item.Quality), 0.08f + 0.06f * sinf((float)ImGui::GetTime() * 4.0f)), r);
+    const ImVec4 qc = QualityColor(item.Quality);
+    dl->AddRect(p, p + ImVec2(size, size), Col(qc, 0.95f), r, 0, S(1.6f));
+    // a little glow for epic and better
+    if (item.Quality >= 4)
+        dl->AddRect(p - ImVec2(1.5f, 1.5f), p + ImVec2(size + 1.5f, size + 1.5f), Col(qc, 0.25f), r + 1.5f, 0, S(2.0f));
+}
+
+static void ItemTooltip(const GearItem& item, int slot)
+{
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, S(12.0f, 10.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, S(8.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, S(6.0f, 3.0f));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.03f, 0.04f, 0.08f, 0.96f));
+    ImGui::PushStyleColor(ImGuiCol_Border, Theme::WithAlpha(item.ItemId ? QualityColor(item.Quality) : Colors.Border, 0.7f));
+    ImGui::BeginTooltip();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(3);
+    if (item.ItemId == 0)
+    {
+        ImGui::TextDisabled("%s - empty", GearSlotName(slot));
+        ImGui::EndTooltip();
+        return;
+    }
+    ImGui::PushFont(Theme::Fonts.Bold);
+    ImGui::PushStyleColor(ImGuiCol_Text, QualityColor(item.Quality));
+    ImGui::TextUnformatted(item.Name.empty() ? ("Item #" + std::to_string(item.ItemId)).c_str() : item.Name.c_str());
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
+    ImGui::TextDisabled("%s %s", QualityName(item.Quality), GearSlotName(slot));
+    if (item.Enchanted)
+        ImGui::TextColored(QualityColor(2), "Enchanted");
+    if (item.Gems > 0)
+        ImGui::TextColored(Colors.TextDim, "%d gem%s socketed", item.Gems, item.Gems == 1 ? "" : "s");
+    ImGui::TextDisabled("Item ID %u", item.ItemId);
+    ImGui::EndTooltip();
+}
+
+// One side slot: icon plus name and details (mirrored on the right column, like the armory).
+void App::DrawGearSlot(const GearItem& item, int slot, ImVec2 pos, float width, bool icon_right)
+{
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float icon = S(36.0f);
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::PushID(slot);
+    ImGui::InvisibleButton("##slot", ImVec2(width, icon));
+    const bool hovered = ImGui::IsItemHovered();
+    const float hov = Widgets::Smooth("##hover", hovered ? 1.0f : 0.0f, 16.0f);
+    ImGui::PopID();
+
+    if (hov > 0.01f)
+        dl->AddRectFilled(pos - S(4.0f, 3.0f), pos + ImVec2(width, icon) + S(4.0f, 3.0f), Col(Colors.CardHi, 0.75f * hov), S(8.0f));
+    const ImVec2 ip = icon_right ? ImVec2(pos.x + width - icon, pos.y) : pos;
+    DrawItemIcon(dl, m_Icons, item, ip, icon);
+
+    ImFont* bold = Theme::Fonts.Bold;
+    ImFont* small = Theme::Fonts.Small;
+    const float text_w = width - icon - S(10.0f);
+    std::string name = item.ItemId == 0 ? std::string("Empty") : item.Name.empty() ? "Item #" + std::to_string(item.ItemId) : item.Name;
+    std::string sub = GearSlotName(slot);
+    if (item.Enchanted)
+        sub += "  \xc2\xb7  Enchanted";
+    if (item.Gems > 0)
+        sub += "  \xc2\xb7  " + std::to_string(item.Gems) + (item.Gems == 1 ? " gem" : " gems");
+    name = EllipsizeEnd(bold, name, text_w);
+    sub = Widgets::Ellipsize(small, sub.c_str(), text_w);
+
+    const float block = bold->FontSize + S(2.0f) + small->FontSize;
+    const float y = pos.y + (icon - block) * 0.5f;
+    const ImU32 name_col = Col(item.ItemId ? QualityColor(item.Quality) : Colors.TextFaint);
+    const float name_w = bold->CalcTextSizeA(bold->FontSize, FLT_MAX, 0.0f, name.c_str()).x;
+    const float sub_w = small->CalcTextSizeA(small->FontSize, FLT_MAX, 0.0f, sub.c_str()).x;
+    const float x_name = icon_right ? ip.x - S(10.0f) - name_w : ip.x + icon + S(10.0f);
+    const float x_sub = icon_right ? ip.x - S(10.0f) - sub_w : ip.x + icon + S(10.0f);
+    dl->AddText(bold, bold->FontSize, ImFloor(ImVec2(x_name, y)), name_col, name.c_str());
+    dl->AddText(small, small->FontSize, ImFloor(ImVec2(x_sub, y + bold->FontSize + S(2.0f))), Col(Colors.TextFaint), sub.c_str());
+
+    if (hovered)
+        ItemTooltip(item, slot);
+}
+
+// The center of the paper-doll: race portrait framed in class colors, spec, and the three weapons.
+void App::DrawToon(const Character& c, ImVec2 pos, ImVec2 size)
+{
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec4 cc = ClassColor(c.Class);
+    const ImVec2 end = pos + size;
+    const float rounding = S(14.0f);
+
+    dl->AddRectFilled(pos, end, Col(Colors.Bg, 0.6f), rounding);
+    dl->PushClipRect(pos, end, true);
+    const ImVec2 center(pos.x + size.x * 0.5f, pos.y + S(78.0f));
+    Widgets::RadialGlow(dl, center, size.x * 0.75f, Col(cc, 0.22f), Col(cc, 0.0f));
+    if (Theme::BackgroundEffects)
+        Widgets::Snow("##toon_snow", dl, pos, end, 0.45f, 18);
+    dl->PopClipRect();
+    dl->AddRect(pos, end, Col(cc, 0.28f), rounding);
+
+    // Portrait in a ring, with a slowly turning class-colored arc.
+    const float r = S(48.0f);
+    const float t = m_Time * 0.8f;
+    dl->AddCircleFilled(center, r + S(6.0f), Col(Colors.Bg), 48);
+    dl->AddCircle(center, r + S(6.0f), Col(cc, 0.35f), 48, S(1.5f));
+    dl->PathArcTo(center, r + S(6.0f), t, t + 1.4f, 24);
+    dl->PathStroke(Col(cc, 0.95f), 0, S(2.5f));
+    dl->PathArcTo(center, r + S(6.0f), t + 3.14159f, t + 3.14159f + 0.6f, 12);
+    dl->PathStroke(Col(cc, 0.6f), 0, S(2.0f));
+
+    const IconCache::Icon* portrait = m_Icons.Get(PortraitUrl(c));
+    if (portrait && portrait->Texture)
+    {
+        dl->AddImageRounded(portrait->Texture, center - ImVec2(r, r), center + ImVec2(r, r), ImVec2(0, 0), portrait->Uv1,
+                            Col(ImVec4(1, 1, 1, 1)), r);
+    }
+    else
+    {
+        // No portrait (yet): the race's initial in class colors.
+        dl->AddCircleFilled(center, r, Col(cc, 0.16f), 48);
+        ImFont* display = Theme::Fonts.Display;
+        const std::string initial = c.Race.empty() ? "?" : c.Race.substr(0, 1);
+        const ImVec2 ts = display->CalcTextSizeA(display->FontSize, FLT_MAX, 0.0f, initial.c_str());
+        dl->AddText(display, display->FontSize, ImFloor(center - ts * 0.5f), Col(cc), initial.c_str());
+    }
+
+    // Class, level/race, spec
+    ImFont* heading = Theme::Fonts.Heading;
+    ImFont* small = Theme::Fonts.Small;
+    auto centered = [&](ImFont* f, float y, ImU32 col, const std::string& text)
+    {
+        const std::string fit = Widgets::Ellipsize(f, text.c_str(), size.x - S(16.0f));
+        const float w = f->CalcTextSizeA(f->FontSize, FLT_MAX, 0.0f, fit.c_str()).x;
+        dl->AddText(f, f->FontSize, ImFloor(ImVec2(pos.x + (size.x - w) * 0.5f, y)), col, fit.c_str());
+    };
+    float y = center.y + r + S(16.0f);
+    centered(heading, y, Col(cc), c.Class.empty() ? std::string("Unknown") : c.Class);
+    y += heading->FontSize + S(2.0f);
+    centered(small, y, Col(Colors.TextDim), "Level " + c.Level + " " + c.Race);
+    y += small->FontSize + S(4.0f);
+    if (!c.Talents.empty())
+    {
+        // Either one entry per tree ("Affliction" / "57") or per spec with "57 / 3 / 11".
+        std::string spec;
+        if (c.Talents[0].second.find('/') != std::string::npos)
+            spec = c.Talents[0].first + "  " + c.Talents[0].second;
+        else
+        {
+            size_t best = 0;
+            std::string points;
+            for (size_t i = 0; i < c.Talents.size(); i++)
+            {
+                if (atoi(c.Talents[i].second.c_str()) > atoi(c.Talents[best].second.c_str()))
+                    best = i;
+                points += (i ? " / " : "") + (c.Talents[i].second.empty() ? std::string("0") : c.Talents[i].second);
+            }
+            spec = c.Talents[best].first + "  " + points;
+        }
+        centered(small, y, Col(Colors.AccentA), spec);
+    }
+
+    // Weapons along the bottom (main hand, off hand, ranged)
+    const float icon = S(36.0f), gap = S(10.0f);
+    const float row_w = icon * 3.0f + gap * 2.0f;
+    const ImVec2 wp(pos.x + (size.x - row_w) * 0.5f, end.y - icon - S(14.0f));
+    for (int i = 0; i < 3; i++)
+    {
+        const int slot = 16 + i;
+        const ImVec2 p(wp.x + i * (icon + gap), wp.y);
+        ImGui::SetCursorScreenPos(p);
+        ImGui::PushID(slot);
+        ImGui::InvisibleButton("##weapon", ImVec2(icon, icon));
+        const bool hovered = ImGui::IsItemHovered();
+        ImGui::PopID();
+        DrawItemIcon(dl, m_Icons, c.Gear[slot], p, icon);
+        if (hovered)
+        {
+            dl->AddRect(p - ImVec2(2, 2), p + ImVec2(icon + 2, icon + 2), Col(Colors.Text, 0.6f), S(7.0f));
+            ItemTooltip(c.Gear[slot], slot);
+        }
+    }
+}
+
+void App::DrawGear(const Character& c, ImVec2 size)
+{
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 o = ImGui::GetCursorScreenPos();
+
+    if (c.Gear.size() != (size_t)GearSlotCount)
+    {
+        // Profile page unavailable: fall back to the summary's item list (no slots / icons).
+        ImFont* body = Theme::Fonts.Body;
+        ImFont* small = Theme::Fonts.Small;
+        dl->AddText(small, small->FontSize, o, Col(Colors.Warning), c.GearError.empty() ? "Gear layout unavailable." : c.GearError.c_str());
+        const float col_w = (size.x - S(16.0f)) * 0.5f;
+        for (size_t i = 0; i < c.Equipment.size(); i++)
+        {
+            const float x = o.x + (i % 2) * (col_w + S(16.0f));
+            const float y = o.y + small->FontSize + S(14.0f) + (i / 2) * (body->FontSize + S(10.0f));
+            const std::string name = Widgets::Ellipsize(body, c.Equipment[i].second.c_str(), col_w);
+            dl->AddText(body, body->FontSize, ImFloor(ImVec2(x, y)), Col(Colors.Text), name.c_str());
+        }
+        ImGui::Dummy(size);
+        return;
+    }
+
+    const float icon = S(36.0f);
+    const float row = (size.y - icon) / 7.0f; // 8 rows spread over the height
+    const float row_step = ImClamp(row, icon + S(4.0f), icon + S(14.0f));
+    const float center_w = ImClamp(size.x * 0.26f, S(168.0f), S(220.0f));
+    const float col_gap = S(14.0f);
+    const float col_w = (size.x - center_w - col_gap * 2.0f) * 0.5f;
+    const float rows_h = icon + row_step * 7.0f;
+
+    for (int i = 0; i < 8; i++)
+        DrawGearSlot(c.Gear[i], i, ImVec2(o.x, o.y + i * row_step), col_w, false);
+    for (int i = 0; i < 8; i++)
+        DrawGearSlot(c.Gear[8 + i], 8 + i, ImVec2(o.x + col_w + center_w + col_gap * 2.0f, o.y + i * row_step), col_w, true);
+    DrawToon(c, ImVec2(o.x + col_w + col_gap, o.y), ImVec2(center_w, rows_h));
+
+    ImGui::SetCursorScreenPos(o);
+    ImGui::Dummy(ImVec2(size.x, rows_h));
+}
+
+void App::DrawCharacterStats(const Character& c, float width)
+{
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImFont* body = Theme::Fonts.Body;
+    ImFont* small = Theme::Fonts.Small;
+    const float tile_gap = S(12.0f);
+    const ImVec2 tile((width - tile_gap * 2.0f) / 3.0f, S(66.0f));
+    StatTile(tile, "ACHIEVEMENTS", c.AchievementPoints, ICON_SHIELD);
+    ImGui::SameLine(0.0f, tile_gap);
+    StatTile(tile, "HONORABLE KILLS", c.HonorableKills, ICON_USERS);
+    ImGui::SameLine(0.0f, tile_gap);
+    StatTile(tile, "EQUIPPED ITEMS", std::to_string(c.EquipmentCount), ICON_PUZZLE);
+
+    ImGui::Dummy(ImVec2(0.0f, S(4.0f)));
+    const ImVec2 colp = ImGui::GetCursorScreenPos();
+    const float half = (width - tile_gap) * 0.5f;
+    auto list = [&](ImVec2 at, float cw, const char* title, const std::vector<std::pair<std::string, std::string>>& items, const char* empty)
+    {
+        Widgets::SpacedText(dl, small, at, Col(Colors.TextFaint), title, S(1.2f));
+        float y = at.y + small->FontSize + S(10.0f);
+        if (items.empty())
+            dl->AddText(body, body->FontSize, ImFloor(ImVec2(at.x, y)), Col(Colors.TextFaint), empty);
+        for (const auto& it : items)
+        {
+            dl->AddText(body, body->FontSize, ImFloor(ImVec2(at.x, y)), Col(Colors.Text), it.first.c_str());
+            if (!it.second.empty())
+            {
+                const float vw = body->CalcTextSizeA(body->FontSize, FLT_MAX, 0.0f, it.second.c_str()).x;
+                dl->AddText(body, body->FontSize, ImFloor(ImVec2(at.x + cw - vw, y)), Col(Colors.AccentA), it.second.c_str());
+            }
+            y += body->FontSize + S(8.0f);
+        }
+    };
+    list(colp, half, "PROFESSIONS", c.Professions, "None");
+    list(ImVec2(colp.x + half + tile_gap, colp.y), half, "SPECS", c.Talents, "Unknown");
+}
+
+// Name, level/race/class, faction and guild, plus the Gear / Stats switch.
+void App::DrawCharacterHeader(const Character& c, float width)
+{
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const ImVec4 class_col = ClassColor(c.Class);
+    const float av = S(52.0f);
+
+    const IconCache::Icon* portrait = m_Icons.Get(PortraitUrl(c));
+    dl->AddRectFilled(origin, origin + ImVec2(av, av), Col(class_col, 0.16f), S(12.0f));
+    if (portrait && portrait->Texture)
+        dl->AddImageRounded(portrait->Texture, origin + ImVec2(2, 2), origin + ImVec2(av - 2, av - 2), ImVec2(0, 0), portrait->Uv1,
+                            Col(ImVec4(1, 1, 1, 1)), S(10.0f));
+    else
+        Widgets::Icon(dl, ICON_SHIELD, origin + ImVec2(av, av) * 0.5f, Col(class_col), true);
+    dl->AddRect(origin, origin + ImVec2(av, av), Col(class_col, 0.6f), S(12.0f), 0, S(1.5f));
+    dl->AddCircleFilled(origin + ImVec2(av - S(3.0f), av - S(3.0f)), S(6.0f), Col(Colors.Card), 16);
+    Widgets::StatusDot(dl, origin + ImVec2(av - S(3.0f), av - S(3.0f)), S(4.0f), c.Online ? Colors.Success : Colors.TextFaint, c.Online);
+
+    ImFont* display = Theme::Fonts.Display;
+    ImFont* body = Theme::Fonts.Body;
+    ImFont* small = Theme::Fonts.Small;
+    const float tx = origin.x + av + S(14.0f);
+    dl->AddText(display, display->FontSize, ImFloor(ImVec2(tx, origin.y - S(4.0f))), Col(class_col), c.Name.c_str());
+    char sub[256];
+    snprintf(sub, sizeof(sub), "Level %s %s %s  \xc2\xb7  %s", c.Level.c_str(), c.Race.c_str(), c.Class.c_str(), c.Realm.c_str());
+    dl->AddText(body, body->FontSize, ImFloor(ImVec2(tx, origin.y + display->FontSize - S(4.0f))), Col(Colors.TextDim), sub);
+    const ImVec4 faction_col = c.Faction == "Horde" ? Colors.Danger : c.Faction == "Alliance" ? ImVec4(0.36f, 0.56f, 0.96f, 1.0f) : Colors.TextDim;
+    std::string line = c.Faction;
+    if (!c.Guild.empty())
+        line += (line.empty() ? "" : "   \xc2\xb7   ") + std::string("<") + c.Guild + ">";
+    line += std::string(line.empty() ? "" : "   \xc2\xb7   ") + (c.Online ? "Online" : "Offline");
+    dl->AddText(small, small->FontSize, ImFloor(ImVec2(tx, origin.y + display->FontSize + body->FontSize - S(1.0f))), Col(faction_col), line.c_str());
+
+    // Gear / Stats segmented switch (top right)
+    static const char* tabs[] = { "Gear", "Stats" };
+    const float tab_w = S(72.0f), tab_h = S(30.0f), pad = S(3.0f);
+    const ImVec2 box(origin.x + width - tab_w * 2.0f - pad * 2.0f, origin.y + S(4.0f));
+    dl->AddRectFilled(box, box + ImVec2(tab_w * 2.0f + pad * 2.0f, tab_h + pad * 2.0f), Col(Colors.CardHi), S(10.0f));
+    for (int i = 0; i < 2; i++)
+    {
+        const ImVec2 p0(box.x + pad + i * tab_w, box.y + pad);
+        ImGui::SetCursorScreenPos(p0);
+        ImGui::PushID(i);
+        if (ImGui::InvisibleButton("##tab", ImVec2(tab_w, tab_h)))
+            m_ArmoryTab = i;
+        const bool hovered = ImGui::IsItemHovered();
+        ImGui::PopID();
+        const bool selected = m_ArmoryTab == i;
+        if (selected)
+            Widgets::GradientRect(dl, p0, p0 + ImVec2(tab_w, tab_h), Col(Colors.AccentA), Col(Colors.AccentB), S(8.0f));
+        else if (hovered)
+            dl->AddRectFilled(p0, p0 + ImVec2(tab_w, tab_h), Col(Colors.Border, 0.6f), S(8.0f));
+        ImFont* bold = Theme::Fonts.Bold;
+        const ImVec2 ts = bold->CalcTextSizeA(bold->FontSize, FLT_MAX, 0.0f, tabs[i]);
+        const bool light_accent = (0.2126f * Colors.AccentA.x + 0.7152f * Colors.AccentA.y + 0.0722f * Colors.AccentA.z) > 0.55f;
+        const ImU32 text_col = selected ? (light_accent ? Col(ImVec4(0.03f, 0.07f, 0.12f, 1.0f)) : Col(ImVec4(1, 1, 1, 1))) : Col(Colors.TextDim);
+        dl->AddText(bold, bold->FontSize, ImFloor(p0 + (ImVec2(tab_w, tab_h) - ts) * 0.5f), text_col, tabs[i]);
+    }
+
+    ImGui::SetCursorScreenPos(origin);
+    ImGui::Dummy(ImVec2(width, av));
+}
+
 void App::DrawArmory()
 {
-    DrawPageHeader("Armory", "Look up any character on Warmane, right here in the launcher.");
-
     const float w = ImGui::GetContentRegionAvail().x;
     const float gap = S(14.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, gap));
@@ -300,7 +698,7 @@ void App::DrawArmory()
         realm_names.push_back(Game::Realms[i].Name);
 
     // --- Search bar ---
-    Widgets::BeginCard("##armory_search", ImVec2(w, S(16.0f) * 2.0f + ImGui::GetFrameHeight()), S(16.0f, 16.0f));
+    Widgets::BeginCard("##armory_search", ImVec2(w, S(14.0f) * 2.0f + ImGui::GetFrameHeight()), S(14.0f, 14.0f));
     {
         const float frame = ImGui::GetFrameHeight();
         const float realm_w = S(150.0f), search_w = S(120.0f);
@@ -308,7 +706,7 @@ void App::DrawArmory()
         ImGui::Combo("##armory_realm", &m_ArmoryRealm, realm_names.data(), (int)realm_names.size());
         ImGui::SameLine(0.0f, S(8.0f));
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - search_w - S(8.0f));
-        const bool entered = ImGui::InputTextWithHint("##armory_name", "Character name", m_ArmoryName, sizeof(m_ArmoryName),
+        const bool entered = ImGui::InputTextWithHint("##armory_name", "Search a character on the armory", m_ArmoryName, sizeof(m_ArmoryName),
                                                       ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine(0.0f, S(8.0f));
         const bool busy = m_Armory.Loading();
@@ -317,146 +715,109 @@ void App::DrawArmory()
     }
     Widgets::EndCard();
 
-    // --- Result ---
-    const float result_h = ImMax(S(250.0f), ImGui::GetContentRegionAvail().y - S(104.0f));
-    Widgets::BeginCard("##armory_result", ImVec2(w, result_h), S(22.0f, 20.0f));
+    // --- Result (fills the rest of the page) ---
+    const float result_h = ImMax(S(380.0f), ImGui::GetContentRegionAvail().y);
+    Widgets::BeginCard("##armory_result", ImVec2(w, result_h), S(18.0f, 16.0f));
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const Armory::State state = m_Armory.GetState();
         const ImVec2 origin = ImGui::GetCursorScreenPos();
-        const float inner_w = ImGui::GetContentRegionAvail().x;
+        const ImVec2 inner = ImGui::GetContentRegionAvail();
 
         if (state == Armory::State::Idle)
         {
+            Widgets::Icon(dl, ICON_SHIELD, origin + ImVec2(inner.x * 0.5f, inner.y * 0.30f), Col(Colors.TextFaint), true);
             const char* hint = "Pick a realm, type a character name, and press Search.";
             const ImVec2 ts = ImGui::CalcTextSize(hint);
-            ImGui::SetCursorScreenPos(origin + ImVec2((inner_w - ts.x) * 0.5f, result_h * 0.4f));
-            ImGui::TextDisabled("%s", hint);
-            Widgets::Icon(dl, ICON_SHIELD, origin + ImVec2(inner_w * 0.5f, result_h * 0.4f - S(34.0f)), Col(Colors.TextFaint), true);
+            dl->AddText(ImFloor(origin + ImVec2((inner.x - ts.x) * 0.5f, inner.y * 0.30f + S(24.0f))), Col(Colors.TextDim), hint);
+
+            // Recent searches as centered chips.
+            std::vector<std::string>& history = m_Settings.ArmoryHistory;
+            if (!history.empty())
+            {
+                ImFont* small = Theme::Fonts.Small;
+                const char* label = "RECENT SEARCHES";
+                const ImVec2 ls = Widgets::SpacedTextSize(small, label, S(1.2f));
+                float y = origin.y + inner.y * 0.30f + S(64.0f);
+                Widgets::SpacedText(dl, small, ImVec2(origin.x + (inner.x - ls.x) * 0.5f, y), Col(Colors.TextFaint), label, S(1.2f));
+                y += small->FontSize + S(10.0f);
+
+                std::vector<std::string> labels;
+                std::vector<float> widths;
+                for (const std::string& entry : history)
+                {
+                    const size_t slash = entry.find('/');
+                    labels.push_back(slash == std::string::npos ? entry : entry.substr(0, slash) + " \xc2\xb7 " + entry.substr(slash + 1));
+                    widths.push_back(small->CalcTextSizeA(small->FontSize, FLT_MAX, 0.0f, labels.back().c_str()).x + S(24.0f));
+                }
+                // Wrap into rows that fit, each row centered.
+                const float max_w = inner.x * 0.85f, chip_gap = S(8.0f), chip_h = S(28.0f);
+                int clicked = -1;
+                for (size_t first = 0; first < labels.size(); )
+                {
+                    size_t last = first;
+                    float row_w = widths[first];
+                    while (last + 1 < labels.size() && row_w + chip_gap + widths[last + 1] <= max_w)
+                        row_w += chip_gap + widths[++last];
+                    float x = origin.x + (inner.x - row_w) * 0.5f;
+                    for (size_t i = first; i <= last; i++)
+                    {
+                        ImGui::SetCursorScreenPos(ImVec2(x, y));
+                        ImGui::PushID((int)i);
+                        if (ImGui::InvisibleButton("##chip", ImVec2(widths[i], chip_h)))
+                            clicked = (int)i;
+                        const bool hov = ImGui::IsItemHovered();
+                        ImGui::PopID();
+                        const ImVec2 p0(x, y), p1(x + widths[i], y + chip_h);
+                        dl->AddRectFilled(p0, p1, Col(hov ? Colors.CardHi : Colors.Bg, hov ? 1.0f : 0.6f), S(14.0f));
+                        dl->AddRect(p0, p1, Col(hov ? Colors.AccentA : Colors.Border, hov ? 0.7f : 1.0f), S(14.0f));
+                        dl->AddText(small, small->FontSize, ImFloor(ImVec2(x + S(12.0f), y + (chip_h - small->FontSize) * 0.5f)),
+                                    Col(hov ? Colors.Text : Colors.TextDim), labels[i].c_str());
+                        x += widths[i] + chip_gap;
+                    }
+                    y += chip_h + chip_gap;
+                    first = last + 1;
+                }
+                if (clicked >= 0)
+                {
+                    const std::string entry = history[clicked];
+                    const size_t slash = entry.find('/');
+                    StartArmorySearch(entry.substr(0, slash), slash == std::string::npos ? 0 : Game::FindRealm(entry.substr(slash + 1)));
+                }
+            }
         }
         else if (state == Armory::State::Loading)
         {
-            Widgets::Spinner(dl, origin + ImVec2(inner_w * 0.5f, result_h * 0.42f), S(26.0f), S(3.0f), m_Time);
+            Widgets::Spinner(dl, origin + ImVec2(inner.x * 0.5f, inner.y * 0.42f), S(26.0f), S(3.0f), m_Time);
             const std::string q = "Looking up " + m_Armory.Query();
             const ImVec2 ts = ImGui::CalcTextSize(q.c_str());
-            dl->AddText(ImFloor(origin + ImVec2((inner_w - ts.x) * 0.5f, result_h * 0.42f + S(40.0f))), Col(Colors.TextDim), q.c_str());
+            dl->AddText(ImFloor(origin + ImVec2((inner.x - ts.x) * 0.5f, inner.y * 0.42f + S(40.0f))), Col(Colors.TextDim), q.c_str());
         }
         else if (state == Armory::State::Error)
         {
             const Character c = m_Armory.Result();
             const std::string msg = c.Error.empty() ? "Character not found." : c.Error;
-            Widgets::Icon(dl, ICON_WARNING, origin + ImVec2(inner_w * 0.5f, result_h * 0.38f), Col(Colors.Warning), true);
+            Widgets::Icon(dl, ICON_WARNING, origin + ImVec2(inner.x * 0.5f, inner.y * 0.38f), Col(Colors.Warning), true);
             const ImVec2 ts = ImGui::CalcTextSize(msg.c_str());
-            dl->AddText(ImFloor(origin + ImVec2((inner_w - ts.x) * 0.5f, result_h * 0.38f + S(22.0f))), Col(Colors.TextDim), msg.c_str());
+            dl->AddText(ImFloor(origin + ImVec2((inner.x - ts.x) * 0.5f, inner.y * 0.38f + S(22.0f))), Col(Colors.TextDim), msg.c_str());
             const char* hint2 = "Check the spelling and realm, then try again.";
             const ImVec2 ts2 = ImGui::CalcTextSize(hint2);
-            dl->AddText(ImFloor(origin + ImVec2((inner_w - ts2.x) * 0.5f, result_h * 0.38f + S(22.0f) + S(20.0f))), Col(Colors.TextFaint), hint2);
+            dl->AddText(ImFloor(origin + ImVec2((inner.x - ts2.x) * 0.5f, inner.y * 0.38f + S(42.0f))), Col(Colors.TextFaint), hint2);
         }
         else // Done
         {
             const Character c = m_Armory.Result();
-            const ImVec4 class_col = ClassColor(c.Class);
-
-            // Header: avatar initial + name + subline
-            const float av = S(56.0f);
-            dl->AddRectFilled(origin, origin + ImVec2(av, av), Col(class_col, 0.16f), S(12.0f));
-            dl->AddRect(origin, origin + ImVec2(av, av), Col(class_col, 0.5f), S(12.0f));
-            Widgets::Icon(dl, ICON_SHIELD, origin + ImVec2(av, av) * 0.5f, Col(class_col), true);
-            Widgets::StatusDot(dl, origin + ImVec2(av - S(3.0f), av - S(3.0f)), S(4.0f), c.Online ? Colors.Success : Colors.TextFaint, c.Online);
-
-            ImFont* display = Theme::Fonts.Display;
-            ImFont* body = Theme::Fonts.Body;
-            ImFont* small = Theme::Fonts.Small;
-            const float tx = origin.x + av + S(16.0f);
-            dl->AddText(display, display->FontSize, ImFloor(ImVec2(tx, origin.y - S(2.0f))), Col(class_col), c.Name.c_str());
-            char sub[256];
-            snprintf(sub, sizeof(sub), "Level %s %s %s  \xc2\xb7  %s", c.Level.c_str(), c.Race.c_str(), c.Class.c_str(), c.Realm.c_str());
-            dl->AddText(body, body->FontSize, ImFloor(ImVec2(tx, origin.y + display->FontSize + S(2.0f))), Col(Colors.TextDim), sub);
-            const ImVec4 fac_col = c.Faction == "Horde" ? Colors.Danger : c.Faction == "Alliance" ? ImVec4(0.36f, 0.56f, 0.96f, 1.0f) : Colors.TextDim;
-            std::string line3 = c.Faction;
-            if (!c.Guild.empty()) line3 += (line3.empty() ? "" : "   \xc2\xb7   ") + std::string("<") + c.Guild + ">";
-            dl->AddText(small, small->FontSize, ImFloor(ImVec2(tx, origin.y + display->FontSize + S(2.0f) + body->FontSize + S(4.0f))), Col(fac_col), line3.c_str());
-            dl->AddText(small, small->FontSize, ImFloor(ImVec2(origin.x + inner_w - small->CalcTextSizeA(small->FontSize, FLT_MAX, 0.0f, c.Online ? "Online" : "Offline").x, origin.y)), Col(c.Online ? Colors.Success : Colors.TextFaint), c.Online ? "Online" : "Offline");
-
-            ImGui::SetCursorScreenPos(origin + ImVec2(0.0f, av + S(18.0f)));
-
-            // Stat tiles
-            const float tile_gap = S(12.0f);
-            const ImVec2 tile((inner_w - tile_gap * 2.0f) / 3.0f, S(66.0f));
-            StatTile(tile, "ACHIEVEMENTS", c.AchievementPoints, ICON_SHIELD);
-            ImGui::SameLine(0.0f, tile_gap);
-            StatTile(tile, "HONORABLE KILLS", c.HonorableKills, ICON_USERS);
-            ImGui::SameLine(0.0f, tile_gap);
-            StatTile(tile, "EQUIPPED ITEMS", std::to_string(c.EquipmentCount), ICON_PUZZLE);
-
-            // Professions + talents
-            ImGui::Dummy(ImVec2(0.0f, S(4.0f)));
-            const ImVec2 colp = ImGui::GetCursorScreenPos();
-            const float half = (inner_w - tile_gap) * 0.5f;
-            auto list = [&](ImVec2 at, float cw, const char* title, const std::vector<std::pair<std::string,std::string>>& items, const char* empty)
-            {
-                Widgets::SpacedText(dl, small, at, Col(Colors.TextFaint), title, S(1.2f));
-                float y = at.y + small->FontSize + S(10.0f);
-                if (items.empty())
-                    dl->AddText(body, body->FontSize, ImFloor(ImVec2(at.x, y)), Col(Colors.TextFaint), empty);
-                for (const auto& it : items)
-                {
-                    dl->AddText(body, body->FontSize, ImFloor(ImVec2(at.x, y)), Col(Colors.Text), it.first.c_str());
-                    if (!it.second.empty())
-                    {
-                        const float vw = body->CalcTextSizeA(body->FontSize, FLT_MAX, 0.0f, it.second.c_str()).x;
-                        dl->AddText(body, body->FontSize, ImFloor(ImVec2(at.x + cw - vw, y)), Col(Colors.AccentA), it.second.c_str());
-                    }
-                    y += body->FontSize + S(8.0f);
-                }
-            };
-            list(colp, half, "PROFESSIONS", c.Professions, "None");
-            list(ImVec2(colp.x + half + tile_gap, colp.y), half, "SPECS", c.Talents, "Unknown");
+            DrawCharacterHeader(c, inner.x);
+            ImGui::Dummy(ImVec2(0.0f, S(2.0f)));
+            const ImVec2 body = ImGui::GetContentRegionAvail();
+            if (m_ArmoryTab == 0)
+                DrawGear(c, body);
+            else
+                DrawCharacterStats(c, inner.x);
         }
     }
     Widgets::EndCard();
     ImGui::PopStyleVar();
-
-    // --- Recent searches (compact chips under the result) ---
-    std::vector<std::string>& history = m_Settings.ArmoryHistory;
-    if (!history.empty())
-    {
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(S(8.0f), S(8.0f)));
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImFont* small = Theme::Fonts.Small;
-        Widgets::SpacedText(dl, small, ImGui::GetCursorScreenPos(), Col(Colors.TextFaint), "RECENT", S(1.2f));
-        ImGui::Dummy(ImVec2(0.0f, small->FontSize + S(2.0f)));
-        float x = ImGui::GetCursorScreenPos().x;
-        const float row_y = ImGui::GetCursorScreenPos().y;
-        const float right = x + w;
-        int clicked = -1;
-        for (int i = 0; i < (int)history.size(); i++)
-        {
-            const std::string& entry = history[i];
-            const size_t slash = entry.find('/');
-            const std::string label = slash == std::string::npos ? entry : entry.substr(0, slash) + " \xc2\xb7 " + entry.substr(slash + 1);
-            const float cw = small->CalcTextSizeA(small->FontSize, FLT_MAX, 0.0f, label.c_str()).x + S(24.0f);
-            if (x + cw > right) break;
-            ImGui::SetCursorScreenPos(ImVec2(x, row_y));
-            ImGui::PushID(i);
-            if (ImGui::InvisibleButton("##chip", ImVec2(cw, S(28.0f))))
-                clicked = i;
-            const bool hov = ImGui::IsItemHovered();
-            const ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
-            dl->AddRectFilled(p0, p1, Col(hov ? Colors.CardHi : Colors.Card), S(14.0f));
-            dl->AddRect(p0, p1, Col(hov ? Colors.AccentA : Colors.Border, hov ? 0.6f : 1.0f), S(14.0f));
-            dl->AddText(small, small->FontSize, ImFloor(ImVec2(p0.x + S(12.0f), (p0.y + p1.y - small->FontSize) * 0.5f)), Col(hov ? Colors.Text : Colors.TextDim), label.c_str());
-            ImGui::PopID();
-            x += cw + S(8.0f);
-        }
-        if (clicked >= 0)
-        {
-            const std::string& entry = history[clicked];
-            const size_t slash = entry.find('/');
-            StartArmorySearch(entry.substr(0, slash), slash == std::string::npos ? 0 : Game::FindRealm(entry.substr(slash + 1)));
-        }
-        ImGui::PopStyleVar();
-    }
 }
 
 //-----------------------------------------------------------------------------

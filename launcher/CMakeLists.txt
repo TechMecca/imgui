@@ -21,6 +21,8 @@ add_executable(NorthrendLauncher WIN32
     src/logon_status.cpp
     src/settings.cpp
     src/armory.cpp
+    src/icons.cpp
+    src/net.cpp
     src/theme.cpp
     src/widgets.cpp
     ${IMGUI_DIR}/imgui.cpp
@@ -31,7 +33,7 @@ add_executable(NorthrendLauncher WIN32
     ${IMGUI_DIR}/imgui_impl_win32.cpp
 )
 target_include_directories(NorthrendLauncher PRIVATE ${IMGUI_DIR})
-target_link_libraries(NorthrendLauncher PRIVATE d3d9 dwmapi version ws2_32 winhttp ole32 shell32 uuid)
+target_link_libraries(NorthrendLauncher PRIVATE d3d9 dwmapi version ws2_32 winhttp windowscodecs ole32 shell32 uuid)
 
 if(MSVC)
     target_compile_options(NorthrendLauncher PRIVATE /W3 /MP)

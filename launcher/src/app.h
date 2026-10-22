@@ -2,6 +2,7 @@
 
 #include "armory.h"
 #include "game.h"
+#include "icons.h"
 #include "imgui.h"
 #include "logon_status.h"
 #include "settings.h"
@@ -48,6 +49,12 @@ private:
     void DrawRealmCards();
     void DrawLaunchBar();
     void DrawArmory();
+    void DrawCharacterHeader(const Character& c, float width);
+    void DrawGear(const Character& c, ImVec2 size);
+    void DrawToon(const Character& c, ImVec2 pos, ImVec2 size);
+    void DrawGearSlot(const GearItem& item, int slot, ImVec2 pos, float width, bool icon_right);
+    void DrawCharacterStats(const Character& c, float width);
+    std::string PortraitUrl(const Character& c) const;
     void StartArmorySearch(const std::string& name, int realm_index);
     void DrawAddons();
     void DrawSettings();
@@ -76,6 +83,8 @@ private:
     char             m_ArmoryName[48] = {};
     int              m_ArmoryRealm = 0;
     Armory           m_Armory;
+    IconCache        m_Icons;
+    int              m_ArmoryTab = 0; // 0 = gear, 1 = stats
 
     // Screen flow
     Screen m_Screen      = Screen::Connect;

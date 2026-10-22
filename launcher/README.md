@@ -12,7 +12,11 @@ An unofficial launcher for **Warmane's** Wrath of the Lich King realms, built wi
    - sets `realmList` and `realmName` in `WTF\Config.wtf`, so the client goes straight to the realm you picked. Other lines are left alone;
    - optionally deletes the `Cache` folder and sets windowed or fullscreen mode;
    - starts `Wow.exe`, watches the process, and can minimize itself and come back when the game closes.
-3. **Armory**: search any character on Warmane and see their summary in-app — class-colored name, level/race/class, faction and guild, online status, achievement points, honorable kills, equipped item count, professions and specs. It calls the public armory JSON API (`armory.warmane.com/api/character/<name>/<realm>/summary`) on a worker thread; it only reads public data and stores nothing but your recent searches.
+3. **Armory**: search any character on Warmane and view them in-app, laid out like the armory:
+   - **Gear**: the 19-slot paper-doll. Each item shows its icon with a quality-colored frame, its name and slot, enchant and gem info, and a tooltip on hover. In the middle is a character panel with the race portrait in class colors, the spec, and the three weapon slots.
+   - **Stats**: achievement points, honorable kills, equipped item count, professions and specs.
+
+   Each search makes two requests to the armory: the public summary JSON (`/api/character/<name>/<realm>/summary`) and the character's profile page (`/character/<name>/<realm>/profile`), which has the gear layout. Results are cached for 5 minutes. Icons come from Warmane's icon CDN and are downloaded once, then cached in `%APPDATA%\NorthrendLauncher\icons`. It only reads public data.
 4. **Addons**: lists `Interface\AddOns` (title, version, notes from each `.toc`), with search and an "Open folder" button.
 5. **Settings**: game folder, realmlist, clear cache, display mode, what to do after launching, accent color, animations, snow.
 
@@ -54,8 +58,10 @@ cmake -S launcher -B build-x64 -A x64   && cmake --build build-x64 --config Rele
 | Realm list (names, tags, descriptions), realmlist host, expected build | `src/game.cpp`, `src/game.h` |
 | What Play writes and how the game starts | `Game::Launch()` in `src/game.cpp` |
 | Logon server check | `src/logon_status.cpp` |
-| Armory fetch + JSON parser | `src/armory.cpp`, `src/armory.h` |
-| Pages (Play, Addons, Settings, About) | `src/pages.cpp` |
+| Armory fetch, JSON and gear parsers | `src/armory.cpp`, `src/armory.h` |
+| Icon download, disk cache, WIC decode | `src/icons.cpp` |
+| HTTP helper (WinHTTP) | `src/net.cpp` |
+| Pages (Play, Armory, Addons, Settings, About) | `src/pages.cpp` |
 | Title bar, sidebar, status bar, toasts | `src/main_screen.cpp` |
 | Connecting window | `src/connect_screen.cpp` |
 
@@ -63,11 +69,16 @@ The realm table reflects Warmane in October 2026. Update `Game::Realms` if realm
 
 ## Armory API
 
-The armory page calls Warmane's public character API. The response shape isn't officially documented,
-so the parser (`ParseCharacterSummary`) is tolerant: numbers may arrive as strings or `null`, and
-missing fields are simply hidden. If Warmane changes the field names, update the mapping in
-`armory.cpp`. `tests/armory_parse_test.cpp` covers the parser offline. Set the `ARMORY_API_BASE`
-environment variable to point the lookup at a different base URL (used for testing).
+Neither source is officially documented, so both parsers are tolerant:
+
+- **Summary JSON** (`ParseCharacterSummary`): numbers may arrive as strings or `null`, and missing fields are hidden.
+- **Profile page** (`ParseProfileGear`): reads the `.item-left` (8), `.item-right` (8) and `.item-bottom` (3) slot columns. Each filled slot carries `rel="item=…&ench=…&gems=…"`, an `icon-qualityN` class and an icon `<img>`.
+
+If Warmane changes the page layout, the Gear tab falls back to a plain list of item names, and the parser needs a small update in `armory.cpp`.
+
+`tests/armory_parse_test.cpp` covers both parsers and the icon decoder offline. To point the lookups at a different server (used for testing), set the `ARMORY_API_BASE` environment variable.
+
+The character panel shows the race portrait rather than a 3D model. A real 3D "toon" would need a WoW model renderer that reads the game's MPQ archives; that is a separate, much larger project.
 
 ## Notes
 

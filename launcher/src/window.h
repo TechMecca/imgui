@@ -16,4 +16,10 @@ namespace Window
     bool  HasRoundedCorners();               // true when Windows 11 rounds the corners for us
     void* NativeHandle();                    // the HWND, e.g. to own a dialog
     void  RunAfterFrame(std::function<void()> fn); // e.g. modal dialogs, which run their own message loop
+
+    // Textures for images (e.g. armory icons). 'bgra' is width*height*4 bytes. The texture is padded
+    // to power-of-two sizes; *u1 / *v1 receive the UV of the image's bottom-right corner.
+    // Main thread only. Returns an ImTextureID (IDirect3DTexture9*), or null on failure.
+    void* CreateTexture(const unsigned char* bgra, int width, int height, float* u1, float* v1);
+    void  ReleaseTexture(void* texture);
 }

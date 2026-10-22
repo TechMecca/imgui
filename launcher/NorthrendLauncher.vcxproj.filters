@@ -36,6 +36,12 @@
     <ClCompile Include="src\armory.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\icons.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\net.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
     <ClCompile Include="src\theme.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -75,6 +81,12 @@
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\armory.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\icons.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\net.h">
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\theme.h">

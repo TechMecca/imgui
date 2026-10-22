@@ -13,6 +13,7 @@
 #include <dwmapi.h>
 #include <objbase.h>
 #include <math.h>
+#include <string.h>
 
 #include <vector>
 
@@ -124,6 +125,42 @@ namespace Window
     bool  HasRoundedCorners() { return g_RoundedCorners; }
     void* NativeHandle()      { return g_hWnd; }
     void  RunAfterFrame(std::function<void()> fn) { g_AfterFrame.push_back(std::move(fn)); }
+
+    void* CreateTexture(const unsigned char* bgra, int width, int height, float* u1, float* v1)
+    {
+        if (!g_pd3dDevice || !bgra || width <= 0 || height <= 0)
+            return nullptr;
+        // Power-of-two sizes work on every D3D9 device; managed pool survives device resets.
+        int tw = 1, th = 1;
+        while (tw < width) tw <<= 1;
+        while (th < height) th <<= 1;
+        LPDIRECT3DTEXTURE9 texture = nullptr;
+        if (FAILED(g_pd3dDevice->CreateTexture((UINT)tw, (UINT)th, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &texture, nullptr)))
+            return nullptr;
+        D3DLOCKED_RECT locked;
+        if (FAILED(texture->LockRect(0, &locked, nullptr, 0)))
+        {
+            texture->Release();
+            return nullptr;
+        }
+        for (int y = 0; y < th; y++)
+        {
+            unsigned char* row = (unsigned char*)locked.pBits + (size_t)y * locked.Pitch;
+            memset(row, 0, (size_t)tw * 4);
+            if (y < height)
+                memcpy(row, bgra + (size_t)y * width * 4, (size_t)width * 4);
+        }
+        texture->UnlockRect(0);
+        *u1 = (float)width / (float)tw;
+        *v1 = (float)height / (float)th;
+        return texture;
+    }
+
+    void ReleaseTexture(void* texture)
+    {
+        if (texture)
+            ((LPDIRECT3DTEXTURE9)texture)->Release();
+    }
 }
 
 // Resizes the window around its current center, kept inside the monitor's work area.

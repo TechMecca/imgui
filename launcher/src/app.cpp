@@ -33,6 +33,7 @@ void App::Shutdown()
 {
     m_Logon.Cancel();
     m_Armory.Cancel();
+    m_Icons.Shutdown();
     m_Settings.Save();
     Game::CloseProcess(m_Process); // the game keeps running; we only drop our handle
     m_Process = nullptr;
@@ -72,6 +73,7 @@ void App::Frame()
     Theme::Animations = m_Settings.Animations;
     Theme::BackgroundEffects = m_Settings.Snow;
     UpdateGameProcess();
+    m_Icons.Pump();
     if (m_SettingsDirty)
     {
         m_SettingsDirty = false;
