@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'app/**'
+      - 'launcher/**'
       - '*.cpp'
       - '*.h'
       - '.github/workflows/build-app.yml'
@@ -15,13 +16,16 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
+        project:
+          - { name: ImGuiApp, dir: app }
+          - { name: NorthrendLauncher, dir: launcher }
         platform: [x86, x64]
     steps:
       - uses: actions/checkout@v4
       - uses: microsoft/setup-msbuild@v2
-      - name: Build Release ${{ matrix.platform }}
-        run: msbuild app\ImGuiApp.sln /m /p:Configuration=Release /p:Platform=${{ matrix.platform }}
+      - name: Build ${{ matrix.project.name }} Release ${{ matrix.platform }}
+        run: msbuild ${{ matrix.project.dir }}\${{ matrix.project.name }}.sln /m /p:Configuration=Release /p:Platform=${{ matrix.platform }}
       - uses: actions/upload-artifact@v4
         with:
-          name: ImGuiApp-${{ matrix.platform }}
-          path: app/bin/${{ matrix.platform }}/Release/ImGuiApp.exe
+          name: ${{ matrix.project.name }}-${{ matrix.platform }}
+          path: ${{ matrix.project.dir }}/bin/${{ matrix.platform }}/Release/${{ matrix.project.name }}.exe

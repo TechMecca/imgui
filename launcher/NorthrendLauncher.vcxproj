@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>16.0</VCProjectVersion>
+    <ProjectGuid>{B3E7A2D4-5C19-4F86-8A3B-9D1E6C7F2A58}</ProjectGuid>
+    <RootNamespace>NorthrendLauncher</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <CharacterSet>Unicode</CharacterSet>
+    <!-- Uses whichever toolset your Visual Studio ships with (v142 for VS 2019, v143 for VS 2022, ...) -->
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'" Label="Configuration">
+    <UseDebugLibraries>true</UseDebugLibraries>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'" Label="Configuration">
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup>
+    <ArchName Condition="'$(Platform)'=='Win32'">x86</ArchName>
+    <ArchName Condition="'$(Platform)'=='x64'">x64</ArchName>
+    <!-- Output: launcher\bin\x86\Release\NorthrendLauncher.exe and launcher\bin\x64\Release\NorthrendLauncher.exe -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\$(ArchName)\$(Configuration)\</OutDir>
+    <IntDir>$(MSBuildThisFileDirectory)obj\$(ArchName)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)..;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <AdditionalDependencies>d3d9.lib;dwmapi.lib;version.lib;ws2_32.lib;ole32.lib;shell32.lib;uuid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <!-- Static CRT: the exe runs without installing the VC++ redistributable -->
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\app.cpp" />
+    <ClCompile Include="src\connect_screen.cpp" />
+    <ClCompile Include="src\main_screen.cpp" />
+    <ClCompile Include="src\pages.cpp" />
+    <ClCompile Include="src\game.cpp" />
+    <ClCompile Include="src\logon_status.cpp" />
+    <ClCompile Include="src\settings.cpp" />
+    <ClCompile Include="src\theme.cpp" />
+    <ClCompile Include="src\widgets.cpp" />
+    <ClCompile Include="..\imgui.cpp" />
+    <ClCompile Include="..\imgui_draw.cpp" />
+    <ClCompile Include="..\imgui_tables.cpp" />
+    <ClCompile Include="..\imgui_widgets.cpp" />
+    <ClCompile Include="..\imgui_impl_dx9.cpp" />
+    <ClCompile Include="..\imgui_impl_win32.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\app.h" />
+    <ClInclude Include="src\game.h" />
+    <ClInclude Include="src\logon_status.h" />
+    <ClInclude Include="src\settings.h" />
+    <ClInclude Include="src\theme.h" />
+    <ClInclude Include="src\widgets.h" />
+    <ClInclude Include="src\window.h" />
+    <ClInclude Include="..\imconfig.h" />
+    <ClInclude Include="..\imgui.h" />
+    <ClInclude Include="..\imgui_internal.h" />
+    <ClInclude Include="..\imgui_impl_dx9.h" />
+    <ClInclude Include="..\imgui_impl_win32.h" />
+    <ClInclude Include="..\imstb_rectpack.h" />
+    <ClInclude Include="..\imstb_textedit.h" />
+    <ClInclude Include="..\imstb_truetype.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>
