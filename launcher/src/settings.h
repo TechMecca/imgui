@@ -5,6 +5,7 @@
 #include "game.h"
 
 #include <string>
+#include <vector>
 
 struct Settings
 {
@@ -17,6 +18,7 @@ struct Settings
     int         Accent      = 0;
     bool        Animations  = true;
     bool        Snow        = true;
+    std::vector<std::string> ArmoryHistory; // recent "Name/Realm" searches, most recent first
 
     void Load();
     void Save() const;

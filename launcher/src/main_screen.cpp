@@ -73,6 +73,7 @@ void App::DrawMain(float dt)
     switch (m_Page)
     {
     case Page::Play:     DrawPlay();     break;
+    case Page::Armory:   DrawArmory();   break;
     case Page::Addons:   DrawAddons();   break;
     case Page::Settings: DrawSettings(); break;
     case Page::About:    DrawAbout();    break;
@@ -138,6 +139,7 @@ void App::DrawSidebar(ImVec2 origin, float width, float height)
     static const NavEntry entries[] =
     {
         { Page::Play,     ICON_PLAY,     "Play"     },
+        { Page::Armory,   ICON_SHIELD,   "Armory"   },
         { Page::Addons,   ICON_PUZZLE,   "Addons"   },
         { Page::Settings, ICON_SETTINGS, "Settings" },
         { Page::About,    ICON_INFO,     "About"    },

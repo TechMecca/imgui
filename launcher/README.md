@@ -12,8 +12,9 @@ An unofficial launcher for **Warmane's** Wrath of the Lich King realms, built wi
    - sets `realmList` and `realmName` in `WTF\Config.wtf`, so the client goes straight to the realm you picked. Other lines are left alone;
    - optionally deletes the `Cache` folder and sets windowed or fullscreen mode;
    - starts `Wow.exe`, watches the process, and can minimize itself and come back when the game closes.
-3. **Addons**: lists `Interface\AddOns` (title, version, notes from each `.toc`), with search and an "Open folder" button.
-4. **Settings**: game folder, realmlist, clear cache, display mode, what to do after launching, accent color, animations, snow.
+3. **Armory**: search any character on Warmane and see their summary in-app — class-colored name, level/race/class, faction and guild, online status, achievement points, honorable kills, equipped item count, professions and specs. It calls the public armory JSON API (`armory.warmane.com/api/character/<name>/<realm>/summary`) on a worker thread; it only reads public data and stores nothing but your recent searches.
+4. **Addons**: lists `Interface\AddOns` (title, version, notes from each `.toc`), with search and an "Open folder" button.
+5. **Settings**: game folder, realmlist, clear cache, display mode, what to do after launching, accent color, animations, snow.
 
 It checks that `Wow.exe` is build **12340** (3.3.5a) and warns about other builds. If you put the launcher in your WoW folder, it finds the game automatically.
 
@@ -53,11 +54,20 @@ cmake -S launcher -B build-x64 -A x64   && cmake --build build-x64 --config Rele
 | Realm list (names, tags, descriptions), realmlist host, expected build | `src/game.cpp`, `src/game.h` |
 | What Play writes and how the game starts | `Game::Launch()` in `src/game.cpp` |
 | Logon server check | `src/logon_status.cpp` |
+| Armory fetch + JSON parser | `src/armory.cpp`, `src/armory.h` |
 | Pages (Play, Addons, Settings, About) | `src/pages.cpp` |
 | Title bar, sidebar, status bar, toasts | `src/main_screen.cpp` |
 | Connecting window | `src/connect_screen.cpp` |
 
 The realm table reflects Warmane in October 2026. Update `Game::Realms` if realms are added or retired. Each name must match the in-game realm name, because it is written to `Config.wtf` as `realmName`.
+
+## Armory API
+
+The armory page calls Warmane's public character API. The response shape isn't officially documented,
+so the parser (`ParseCharacterSummary`) is tolerant: numbers may arrive as strings or `null`, and
+missing fields are simply hidden. If Warmane changes the field names, update the mapping in
+`armory.cpp`. `tests/armory_parse_test.cpp` covers the parser offline. Set the `ARMORY_API_BASE`
+environment variable to point the lookup at a different base URL (used for testing).
 
 ## Notes
 

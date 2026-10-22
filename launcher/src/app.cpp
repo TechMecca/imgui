@@ -32,6 +32,7 @@ void App::Init()
 void App::Shutdown()
 {
     m_Logon.Cancel();
+    m_Armory.Cancel();
     m_Settings.Save();
     Game::CloseProcess(m_Process); // the game keeps running; we only drop our handle
     m_Process = nullptr;

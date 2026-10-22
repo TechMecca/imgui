@@ -1,5 +1,6 @@
 #pragma once
 
+#include "armory.h"
 #include "game.h"
 #include "imgui.h"
 #include "logon_status.h"
@@ -20,7 +21,7 @@ public:
 
 private:
     enum class Screen { Connect, Main };
-    enum class Page   { Play, Addons, Settings, About };
+    enum class Page   { Play, Armory, Addons, Settings, About };
 
     struct Toast { const char* Icon; std::string Text; ImVec4 Color; float Age; float Y; };
 
@@ -46,6 +47,8 @@ private:
     void DrawBanner(ImVec2 size);
     void DrawRealmCards();
     void DrawLaunchBar();
+    void DrawArmory();
+    void StartArmorySearch(const std::string& name, int realm_index);
     void DrawAddons();
     void DrawSettings();
     void DrawAbout();
@@ -70,6 +73,9 @@ private:
     bool             m_AddonsScanned = false;
     char             m_AddonFilter[64] = {};
     char             m_RealmlistInput[128] = {};
+    char             m_ArmoryName[48] = {};
+    int              m_ArmoryRealm = 0;
+    Armory           m_Armory;
 
     // Screen flow
     Screen m_Screen      = Screen::Connect;

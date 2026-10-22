@@ -33,6 +33,9 @@
     <ClCompile Include="src\settings.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\armory.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
     <ClCompile Include="src\theme.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -69,6 +72,9 @@
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\settings.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\armory.h">
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\theme.h">

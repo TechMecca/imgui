@@ -38,6 +38,7 @@ void Settings::Load()
         else if (key == "accent")       Accent      = atoi(value.c_str());
         else if (key == "animations")   Animations  = value == "1";
         else if (key == "snow")         Snow        = value == "1";
+        else if (key == "armory_recent" && !value.empty() && ArmoryHistory.size() < 8) ArmoryHistory.push_back(value);
     }
 }
 
@@ -56,4 +57,6 @@ void Settings::Save() const
       << "accent="       << Accent                  << "\r\n"
       << "animations="   << (Animations ? 1 : 0)    << "\r\n"
       << "snow="         << (Snow ? 1 : 0)          << "\r\n";
+    for (const std::string& entry : ArmoryHistory)
+        f << "armory_recent=" << entry << "\r\n";
 }
